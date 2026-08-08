@@ -1,0 +1,128 @@
+name: "Build homescreen (aarch64, self-hosted)"
+description: >
+  Builds ivi-homescreen with the flatpak plugin compiled in, for aarch64, on a
+  self-hosted runner. Ports ivi-homescreen-plugins/.github/actions/homescreen-build's
+  cmake/ninja recipe, swapping its apt-installed x86_64 LLVM-18 for the pinned
+  LLVM 18.1.8 upstream release tarball (the only aarch64-native LLVM-18
+  toolchain proven to work in this project — apt.llvm.org's clang-18 packages
+  are x86_64-only on a typical runner).
+
+inputs:
+  homescreen-ref:
+    description: "git ref of ivi-homescreen to build against"
+    required: true
+  plugins-ref:
+    description: "git ref of ivi-homescreen-plugins to build against"
+    required: true
+  llvm-toolchain-version:
+    description: "LLVM release version (e.g. 18.1.8)"
+    required: true
+  llvm-toolchain-sha256:
+    description: "sha256 of the aarch64 LLVM release tarball, verified before use"
+    required: true
+
+outputs:
+  homescreen-bin:
+    description: "Path to the built homescreen binary"
+    value: ${{ steps.paths.outputs.homescreen-bin }}
+  ihs-shared-dir:
+    description: "Path to the built shared/ dir (libihs_shared.so*)"
+    value: ${{ steps.paths.outputs.ihs-shared-dir }}
+  toolchain-lib-dir:
+    description: "Path to the toolchain's lib/<triplet> dir (libc++/libc++abi/libunwind)"
+    value: ${{ steps.paths.outputs.toolchain-lib-dir }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Fetch ivi-homescreen
+      uses: actions/checkout@v5
+      with:
+        repository: toyota-connected/ivi-homescreen
+        path: ivi-homescreen
+        ref: ${{ inputs.homescreen-ref }}
+        fetch-depth: 1
+        submodules: true
+        persist-credentials: false
+
+    - name: Fetch ivi-homescreen-plugins
+      uses: actions/checkout@v5
+      with:
+        repository: toyota-connected/ivi-homescreen-plugins
+        path: ivi-homescreen-plugins
+        ref: ${{ inputs.plugins-ref }}
+        fetch-depth: 1
+        submodules: true
+        persist-credentials: false
+
+    - name: Download + verify LLVM toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        VER="${{ inputs.llvm-toolchain-version }}"
+        SHA="${{ inputs.llvm-toolchain-sha256 }}"
+        URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${VER}/clang+llvm-${VER}-aarch64-linux-gnu.tar.xz"
+        DEST="${{ github.workspace }}/toolchain-llvm.tar.xz"
+        curl -fL "$URL" -o "$DEST"
+        echo "${SHA}  ${DEST}" | sha256sum -c -
+        mkdir -p "${{ github.workspace }}/toolchain-llvm"
+        tar -xJf "$DEST" -C "${{ github.workspace }}/toolchain-llvm" --strip-components=1
+
+    - name: Install OS dependencies
+      shell: bash
+      run: |
+        sudo apt-get update -yq
+        sudo apt-get install -yq \
+          ninja-build \
+          libwayland-dev wayland-protocols libxkbcommon-dev \
+          libpugixml-dev \
+          mesa-common-dev libegl1-mesa-dev libgles2-mesa-dev mesa-utils \
+          libsystemd-dev \
+          libcurl4-openssl-dev \
+          libevent-dev \
+          libicu-dev \
+          libsecret-1-dev \
+          libuv1-dev \
+          libjpeg-turbo8-dev libturbojpeg0-dev libjpeg-dev \
+          libpng-dev libwebp-dev \
+          libflatpak-dev libxml2-dev zlib1g-dev
+
+    - name: Configure
+      shell: bash
+      run: |
+        set -euo pipefail
+        TOOLCHAIN="${{ github.workspace }}/toolchain-llvm"
+        mkdir -p "${{ github.workspace }}/build"
+        CC="$TOOLCHAIN/bin/clang" CXX="$TOOLCHAIN/bin/clang++" \
+        CXXFLAGS="-stdlib=libc++" LDFLAGS="-lc++abi" \
+        cmake -GNinja \
+          -S "${{ github.workspace }}/ivi-homescreen" \
+          -B "${{ github.workspace }}/build" \
+          -D LLVM_CONFIG="$TOOLCHAIN/bin/llvm-config" \
+          -D ENABLE_STATIC_LINK=ON \
+          -D ENABLE_LTO=ON \
+          -D CMAKE_BUILD_TYPE=Release \
+          -D CMAKE_STAGING_PREFIX="${{ github.workspace }}/build/staging/usr/local" \
+          -D BUILD_NUMBER=${{ github.run_id }} \
+          -D CMAKE_VERBOSE_MAKEFILE=ON \
+          -D ENABLE_DLT=OFF \
+          -D BUILD_CRASH_HANDLER=OFF \
+          -D PLUGINS_DIR="${{ github.workspace }}/ivi-homescreen-plugins/plugins" \
+          -D DEBUG_PLATFORM_MESSAGES=OFF \
+          -D BUILD_PLUGIN_FLATPAK=ON \
+          -D BUILD_WATCHDOG=OFF \
+          -D BUILD_SYSTEMD_WATCHDOG=OFF \
+          -D CMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+    - name: Build
+      shell: bash
+      working-directory: ${{ github.workspace }}/build
+      run: ninja homescreen
+
+    - name: Resolve output paths
+      id: paths
+      shell: bash
+      run: |
+        echo "homescreen-bin=${{ github.workspace }}/build/shell/homescreen" >> "$GITHUB_OUTPUT"
+        echo "ihs-shared-dir=${{ github.workspace }}/build/shared" >> "$GITHUB_OUTPUT"
+        echo "toolchain-lib-dir=${{ github.workspace }}/toolchain-llvm/lib/aarch64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"

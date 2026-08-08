@@ -1,0 +1,143 @@
+name: ci
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: [self-hosted, linux, aarch64]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v5
+
+      - name: Load versions.env
+        run: cat versions.env >> "$GITHUB_ENV"
+
+      - name: Checkout tcna-packages at pinned ref
+        uses: actions/checkout@v5
+        with:
+          repository: AhmedAdelWafdy7/tcna-packages
+          ref: ${{ env.TCNA_PACKAGES_REF }}
+          path: tcna-packages
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+
+      - name: Manifest lint
+        run: flatpak-builder --show-manifest org.agl.FlatpakAppStore.yml >/dev/null
+
+      # --- Build homescreen -----------------------------------------------
+      - name: Build homescreen (x86_64)
+        if: matrix.arch == 'x86_64'
+        id: homescreen-x86_64
+        uses: toyota-connected/ivi-homescreen-plugins/.github/actions/homescreen-build@${{ env.IVI_HOMESCREEN_PLUGINS_REF }}
+        with:
+          name: flatpak
+          plugins-ref: ${{ env.IVI_HOMESCREEN_PLUGINS_REF }}
+        # NOTE: this composite action only configures the build; the target
+        # still needs to be built (mirrors ivi-homescreen-plugins' own CI).
+      - name: ninja homescreen (x86_64)
+        if: matrix.arch == 'x86_64'
+        working-directory: ${{ github.workspace }}/build
+        run: ninja homescreen
+
+      - name: Build homescreen (aarch64)
+        if: matrix.arch == 'aarch64'
+        id: homescreen-aarch64
+        uses: ./.github/actions/build-homescreen-aarch64
+        with:
+          homescreen-ref: ${{ env.IVI_HOMESCREEN_REF }}
+          plugins-ref: ${{ env.IVI_HOMESCREEN_PLUGINS_REF }}
+          llvm-toolchain-version: ${{ env.LLVM_TOOLCHAIN_VERSION }}
+          llvm-toolchain-sha256: ${{ env.LLVM_TOOLCHAIN_AARCH64_SHA256 }}
+
+      - name: Resolve per-arch build paths
+        id: arch-paths
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            echo "homescreen_bin=${{ github.workspace }}/build/shell/homescreen" >> "$GITHUB_OUTPUT"
+            echo "ihs_shared_dir=${{ github.workspace }}/build/shared" >> "$GITHUB_OUTPUT"
+            echo "engine_url=${{ env.FLUTTER_ENGINE_ARTIFACT_URL_X86_64 }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "homescreen_bin=${{ steps.homescreen-aarch64.outputs.homescreen-bin }}" >> "$GITHUB_OUTPUT"
+            echo "ihs_shared_dir=${{ steps.homescreen-aarch64.outputs.ihs-shared-dir }}" >> "$GITHUB_OUTPUT"
+            echo "engine_url=${{ env.FLUTTER_ENGINE_ARTIFACT_URL_AARCH64 }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --- Fetch the pinned custom Flutter engine (built separately, see CI.md) ---
+      - name: Fetch Flutter engine artifact
+        run: |
+          set -euo pipefail
+          if [ -z "${{ steps.arch-paths.outputs.engine_url }}" ]; then
+            echo "ERROR: no FLUTTER_ENGINE_ARTIFACT_URL_${{ matrix.arch }} set in versions.env — see CI.md" >&2
+            exit 1
+          fi
+          curl -fL "${{ steps.arch-paths.outputs.engine_url }}" -o "${{ github.workspace }}/libflutter_engine.so"
+
+      # --- Build the app bundle + package the flatpak ----------------------
+      - name: Build Flutter bundle
+        env:
+          EXAMPLE_DIR: ${{ github.workspace }}/tcna-packages/packages/flatpak/example
+          FLUTTER_ENGINE_LIB: ${{ github.workspace }}/libflutter_engine.so
+        run: ./scripts/01-build-flutter-bundle.sh
+
+      - name: Discover + stage vendor libs
+        env:
+          HOMESCREEN_BIN: ${{ steps.arch-paths.outputs.homescreen_bin }}
+          IHS_SHARED_DIR: ${{ steps.arch-paths.outputs.ihs_shared_dir }}
+          # VENDOR_DEV_GPU_STACK intentionally left unset — production default off.
+        run: |
+          ./scripts/02-discover-vendor-libs.sh
+          ./scripts/03-stage-vendor-libs.sh
+
+      - name: flatpak-builder build + bundle
+        env:
+          FLATPAK_ARCH: ${{ matrix.arch }}
+        run: ./scripts/05-build-bundle.sh
+
+      - name: Validate dependency closure
+        run: |
+          set +e
+          find build-dir/files -type f \( -executable -o -name '*.so*' \) -exec sh -c \
+            'ldd "$1" 2>&1 | grep -q "not found" && echo "BROKEN: $1"' _ {} \; | tee missing.txt
+          [ -s missing.txt ] && exit 1 || exit 0
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-${{ matrix.arch }}
+          path: org.agl.FlatpakAppStore-${{ matrix.arch }}.flatpak
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: flatpak-*
+          merge-multiple: false
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            flatpak-x86_64/*.flatpak \
+            flatpak-aarch64/*.flatpak \
+            --generate-notes

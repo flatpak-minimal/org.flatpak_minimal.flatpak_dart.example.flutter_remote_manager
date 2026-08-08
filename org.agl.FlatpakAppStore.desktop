@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=AGL Flatpak App Store
+Comment=Browse, install, and manage Flatpak applications
+Exec=flatpak-app-store
+Icon=org.agl.FlatpakAppStore
+Terminal=false
+Categories=System;PackageManager;
