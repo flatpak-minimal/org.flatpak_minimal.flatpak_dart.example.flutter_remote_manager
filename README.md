@@ -25,24 +25,38 @@ mismatches against the Flatpak SDK's toolchain, and it's much slower).
 
 ## Production / CI
 
-- `versions.env` is the single source of truth for pinned versions/refs
-  (Flutter, `org.freedesktop.Platform` runtime, `tcna-packages`/`ivi-homescreen`/
-  `ivi-homescreen-plugins` commit refs, LLVM toolchain version + checksum).
-- `.github/workflows/ci.yml` builds **both aarch64 and x86_64** on every push
-  and PR (aarch64 on a self-hosted runner, x86_64 on GitHub-hosted
-  `ubuntu-latest`), validates the built dependency closure, and — on tag
-  pushes — publishes single-file `.flatpak` bundles to a GitHub Release. See
-  `CI.md` for the required per-job env vars and how the custom Flutter engine
-  artifact is fetched (built separately, not per-push).
-- `VENDOR_DEV_GPU_STACK=1` is a **dev-only opt-in flag** (unset/off by
-  default) that vendors this specific dev VM's Mesa/GL/DRI stack to work
-  around its virtualized-GPU (virtio-gpu/virgl) version mismatch — see "The
-  EGL/GPU problem" below. Production/CI builds never set it; real IVI target
-  hardware has a single native Mesa/DRM stack and shouldn't need it.
-- `scripts/05-build-bundle.sh` is CI's bundle-producing path (`flatpak
-  build-bundle`, arch-parameterized via `FLATPAK_ARCH`), kept separate from
-  the dev-loop `scripts/04-build-and-install.sh` (`--user --install`) so they
-  don't contend over the same `build-dir`.
+Two manifests:
+- **`org.agl.FlatpakAppStore.yml`** (production) — network-native, no local
+  staging dependency. Fetches two per-arch tarballs (a prebuilt `homescreen` +
+  its full runtime dependency closure, and the Flutter app's release bundle)
+  as pinned `type: archive` sources. Built in CI via
+  [`flatpak/flatpak-github-actions`](https://github.com/flatpak/flatpak-github-actions).
+- **`org.agl.FlatpakAppStore.dev.yml`** (local dev only) — the original
+  local-staged-directory manifest, still used by `scripts/04`/`05` for
+  iterating on this dev VM, including the GPU vendoring workaround.
+
+Two workflows:
+- **`.github/workflows/build-artifacts.yml`** (manual trigger) — builds
+  `homescreen` + the Flutter bundle from source per architecture (aarch64 on
+  a self-hosted runner, x86_64 on GitHub-hosted `ubuntu-latest`), packages
+  them into the tarballs the production manifest pins by URL + sha256.
+- **`.github/workflows/ci.yml`** (every push + PR) — builds the production
+  manifest for both `x86_64` and `aarch64` (aarch64 via QEMU on a regular
+  `ubuntu-latest` runner — this job only packages prebuilt artifacts, it
+  never compiles anything, so no self-hosted runner is needed here),
+  deploys every push to [flat-manager](https://github.com/flatpak/flat-manager)
+  (self-hosted separately — see `CI.md`), and on tag pushes also creates a
+  GitHub Release with both `.flatpak` bundles.
+
+See `CI.md` for the artifact-pinning update procedure, required secrets, and
+the custom Flutter engine artifact pipeline.
+
+`VENDOR_DEV_GPU_STACK=1` is a **dev-only opt-in flag** (unset/off by default)
+used only by the dev manifest/scripts to vendor this specific dev VM's
+Mesa/GL/DRI stack, working around its virtualized-GPU (virtio-gpu/virgl)
+version mismatch — see "The EGL/GPU problem" below. The production
+manifest/pipeline never uses it; real IVI target hardware has a single
+native Mesa/DRM stack and shouldn't need it.
 
 ## Build (local dev loop)
 
@@ -69,7 +83,7 @@ The pipeline runs, in order:
    host's Mesa GL/EGL stack + DRI drivers, and everything flagged in
    `vendor-libs.txt` into `staging/vendor-bin` / `staging/vendor-lib`.
 4. `flatpak-builder --user --install --force-clean build-dir
-   org.agl.FlatpakAppStore.yml`.
+   org.agl.FlatpakAppStore.dev.yml`.
 
 ## The EGL/GPU problem (solved)
 

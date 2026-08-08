@@ -18,7 +18,7 @@ fi
 "$PKG_DIR/scripts/03-stage-vendor-libs.sh"
 
 FLATPAK_ARCH="${FLATPAK_ARCH:-$(flatpak --default-arch)}"
-flatpak-builder --arch="$FLATPAK_ARCH" --user --install --force-clean build-dir org.agl.FlatpakAppStore.yml
+flatpak-builder --arch="$FLATPAK_ARCH" --user --install --force-clean build-dir org.agl.FlatpakAppStore.dev.yml
 
 echo
 echo "Done. Launch with: flatpak run org.agl.FlatpakAppStore"

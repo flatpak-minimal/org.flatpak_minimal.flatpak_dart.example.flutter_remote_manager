@@ -1,23 +1,10 @@
-# PRODUCTION MANIFEST — network-native sources only (no local staging/
-# dependency), built via flatpak/flatpak-github-actions in CI
-# (.github/workflows/ci.yml) and published through flat-manager.
+# DEV MANIFEST — local-directory sources, requires scripts/01-04 to have
+# already populated staging/ on this machine. Used for local iteration and
+# the dev-only GPU vendoring workaround (VENDOR_DEV_GPU_STACK=1).
 #
-# The two large prebuilt inputs (the homescreen binary + its full runtime
-# dependency closure, and the Flutter app's release bundle) are fetched as
-# per-architecture archives, built and published separately by
-# .github/workflows/build-artifacts.yml (see CI.md) — flatpak-builder's own
-# sandbox has no Flutter SDK or the LLVM 18.1.8/AGL toolchain needed to build
-# these from source, so they're pinned artifacts like any other flatpak-builder
-# source, not built in this manifest.
-#
-# For local iteration against locally-staged directories (and the dev-only
-# GPU vendoring workaround), use org.agl.FlatpakAppStore.dev.yml instead.
-#
-# NOTE: the archive url/sha256 fields below are placeholders (TODO) until
-# .github/workflows/build-artifacts.yml has been run at least once per arch
-# and its output recorded here — see CI.md "Artifact pinning" for the update
-# procedure.
-
+# CI/production builds use org.agl.FlatpakAppStore.yml instead — a
+# network-native manifest with no local staging dependency, fetching pinned
+# per-arch artifact tarballs, built via flatpak/flatpak-github-actions.
 app-id: org.agl.FlatpakAppStore
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
@@ -59,25 +46,26 @@ modules:
   - name: homescreen-bin
     buildsystem: simple
     build-commands:
-      - install -Dm755 homescreen/bin/homescreen /app/bin/homescreen
+      - install -Dm755 vendor-bin/homescreen /app/bin/homescreen
       - mkdir -p /app/lib
-      - sh -c 'for f in homescreen/lib/*; do cp -a "$f" "/app/lib/$(basename "$f")"; done'
+      - sh -c 'for f in vendor-lib/*; do cp -a "$f" "/app/lib/$(basename "$f")"; done'
       - install -Dm755 flatpak-app-store.sh /app/bin/flatpak-app-store
+      # Only present when the dev-only GPU vendoring profile was staged
+      # (VENDOR_DEV_GPU_STACK=1, see scripts/03-stage-vendor-libs.sh) — a
+      # no-op on production builds.
+      - sh -c 'test -f mesa-json/50_mesa.json && install -Dm644 mesa-json/50_mesa.json /app/lib/50_mesa.json || true'
     sources:
-      # TODO: fill in after the first build-artifacts.yml run for aarch64.
-      - type: archive
-        url: https://github.com/AhmedAdelWafdy7/org.agl.FlatpakAppStore/releases/download/artifacts/homescreen-aarch64.tar.xz
-        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
-        only-arches: [aarch64]
-        dest: homescreen
-      # TODO: fill in after the first build-artifacts.yml run for x86_64.
-      - type: archive
-        url: https://github.com/AhmedAdelWafdy7/org.agl.FlatpakAppStore/releases/download/artifacts/homescreen-x86_64.tar.xz
-        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
-        only-arches: [x86_64]
-        dest: homescreen
+      - type: dir
+        path: staging/vendor-bin
+        dest: vendor-bin
+      - type: dir
+        path: staging/vendor-lib
+        dest: vendor-lib
       - type: file
         path: flatpak-app-store.sh
+      - type: dir
+        path: staging/mesa-json
+        dest: mesa-json
 
   - name: app-bundle
     buildsystem: simple
@@ -85,17 +73,8 @@ modules:
       - mkdir -p /app/share/flatpak-app-store/bundle
       - cp -a bundle/. /app/share/flatpak-app-store/bundle/
     sources:
-      # TODO: fill in after the first build-artifacts.yml run for aarch64.
-      - type: archive
-        url: https://github.com/AhmedAdelWafdy7/org.agl.FlatpakAppStore/releases/download/artifacts/flutter-bundle-aarch64.tar.xz
-        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
-        only-arches: [aarch64]
-        dest: bundle
-      # TODO: fill in after the first build-artifacts.yml run for x86_64.
-      - type: archive
-        url: https://github.com/AhmedAdelWafdy7/org.agl.FlatpakAppStore/releases/download/artifacts/flutter-bundle-x86_64.tar.xz
-        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
-        only-arches: [x86_64]
+      - type: dir
+        path: staging/bundle
         dest: bundle
 
   - name: desktop-metadata

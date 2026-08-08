@@ -1,0 +1,123 @@
+name: build-artifacts
+
+# Manual trigger only — this builds homescreen from source (heavy, and for
+# aarch64 needs a self-hosted runner) plus the Flutter app bundle, then
+# publishes the resulting tarballs as GitHub Release assets. It is NOT run on
+# every push: the production manifest (org.agl.FlatpakAppStore.yml) pins
+# specific, checksummed tarball versions and only needs new ones when
+# homescreen/the Flutter app/the toolchain actually change — see CI.md
+# "Artifact pinning".
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: [self-hosted, linux, aarch64]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v5
+
+      - name: Load versions.env
+        run: cat versions.env >> "$GITHUB_ENV"
+
+      - name: Checkout tcna-packages at pinned ref
+        uses: actions/checkout@v5
+        with:
+          repository: AhmedAdelWafdy7/tcna-packages
+          ref: ${{ env.TCNA_PACKAGES_REF }}
+          path: tcna-packages
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+
+      # --- Build homescreen -----------------------------------------------
+      - name: Build homescreen (x86_64)
+        if: matrix.arch == 'x86_64'
+        uses: toyota-connected/ivi-homescreen-plugins/.github/actions/homescreen-build@${{ env.IVI_HOMESCREEN_PLUGINS_REF }}
+        with:
+          name: flatpak
+          plugins-ref: ${{ env.IVI_HOMESCREEN_PLUGINS_REF }}
+      - name: ninja homescreen (x86_64)
+        if: matrix.arch == 'x86_64'
+        working-directory: ${{ github.workspace }}/build
+        run: ninja homescreen
+
+      - name: Build homescreen (aarch64)
+        if: matrix.arch == 'aarch64'
+        id: homescreen-aarch64
+        uses: ./.github/actions/build-homescreen-aarch64
+        with:
+          homescreen-ref: ${{ env.IVI_HOMESCREEN_REF }}
+          plugins-ref: ${{ env.IVI_HOMESCREEN_PLUGINS_REF }}
+          llvm-toolchain-version: ${{ env.LLVM_TOOLCHAIN_VERSION }}
+          llvm-toolchain-sha256: ${{ env.LLVM_TOOLCHAIN_AARCH64_SHA256 }}
+
+      - name: Resolve per-arch build paths
+        id: arch-paths
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            echo "homescreen_bin=${{ github.workspace }}/build/shell/homescreen" >> "$GITHUB_OUTPUT"
+            echo "ihs_shared_dir=${{ github.workspace }}/build/shared" >> "$GITHUB_OUTPUT"
+          else
+            echo "homescreen_bin=${{ steps.homescreen-aarch64.outputs.homescreen-bin }}" >> "$GITHUB_OUTPUT"
+            echo "ihs_shared_dir=${{ steps.homescreen-aarch64.outputs.ihs-shared-dir }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --- Flutter engine (custom-patched build, published separately — see
+      #     CI.md "Flutter engine"; this step fails loudly until that's done) ---
+      - name: Fetch Flutter engine artifact
+        run: |
+          set -euo pipefail
+          URL_VAR="FLUTTER_ENGINE_ARTIFACT_URL_$(echo "${{ matrix.arch }}" | tr '[:lower:]' '[:upper:]')"
+          URL="${!URL_VAR:-}"
+          if [ -z "$URL" ]; then
+            echo "ERROR: $URL_VAR not set in versions.env — build/publish the custom Flutter engine for ${{ matrix.arch }} first (see CI.md)" >&2
+            exit 1
+          fi
+          curl -fL "$URL" -o "${{ github.workspace }}/libflutter_engine.so"
+
+      # --- Build the Flutter bundle + vendor deps (no GPU stack — production) ---
+      - name: Build Flutter bundle
+        env:
+          EXAMPLE_DIR: ${{ github.workspace }}/tcna-packages/packages/flatpak/example
+          FLUTTER_ENGINE_LIB: ${{ github.workspace }}/libflutter_engine.so
+        run: ./scripts/01-build-flutter-bundle.sh
+
+      - name: Discover + stage vendor libs
+        env:
+          HOMESCREEN_BIN: ${{ steps.arch-paths.outputs.homescreen_bin }}
+          IHS_SHARED_DIR: ${{ steps.arch-paths.outputs.ihs_shared_dir }}
+          # VENDOR_DEV_GPU_STACK intentionally unset — never publish the dev
+          # GPU workaround in a production artifact tarball.
+        run: |
+          ./scripts/02-discover-vendor-libs.sh
+          ./scripts/03-stage-vendor-libs.sh
+
+      - name: Package artifact tarballs
+        env:
+          FLATPAK_ARCH: ${{ matrix.arch }}
+        run: ./scripts/06-publish-artifacts.sh
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view artifacts >/dev/null 2>&1 || \
+            gh release create artifacts --title "Build artifacts" --notes "Prebuilt homescreen + Flutter bundle tarballs consumed by org.agl.FlatpakAppStore.yml. Not a user-facing release." --prerelease
+          gh release upload artifacts artifacts/*.tar.xz artifacts/SHA256SUMS-*.txt --clobber
+
+      - name: Print sha256 for manifest pinning
+        run: cat artifacts/SHA256SUMS-*.txt
