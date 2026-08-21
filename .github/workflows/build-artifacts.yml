@@ -5,6 +5,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -30,38 +32,37 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Build homescreen
-        id: homescreen
+      - name: Set up emb_cli and ivi-homescreen
+        id: setup
         uses: ./.github/actions/build-homescreen
         with:
           homescreen-ref: ${{ env.IVI_HOMESCREEN_REF }}
           emb-cli-ref: ${{ env.EMB_CLI_REF }}
-          emb-target: ${{ env.EMB_TARGET }}
-
-      - name: Resolve per-arch build paths
-        id: arch-paths
-        run: |
-          echo "homescreen_bin=${{ steps.homescreen.outputs.homescreen-bin }}" >> "$GITHUB_OUTPUT"
-          echo "ihs_shared_dir=${{ steps.homescreen.outputs.ihs-shared-dir }}" >> "$GITHUB_OUTPUT"
-          echo "wayland_lib_dir=/usr/lib/$(uname -m)-linux-gnu" >> "$GITHUB_OUTPUT"
 
       - name: Provision Flutter SDK
-        run: emb flutter --flutter-version "${{ env.FLUTTER_VERSION }}"
+        env:
+          FLUTTER_WORKSPACE: ${{ github.workspace }}/staging/emb-workspace
+        run: |
+          mkdir -p "$FLUTTER_WORKSPACE"
+          emb flutter --flutter-version "${{ env.FLUTTER_VERSION }}"
 
-      - name: Provision Flutter engine
-        run: emb engine --mode release --target "${{ env.EMB_TARGET }}"
-
-      - name: Build Flutter bundle
+      - name: Build embedder + app bundle
         env:
           APP_DIR: ${{ github.workspace }}/app
+          IHS_DIR: ${{ steps.setup.outputs.ihs-dir }}
+          EMB_TARGET: ${{ env.EMB_TARGET }}
         run: ./scripts/01-build-flutter-bundle.sh
 
+      - name: Install flatpak runtime for dependency comparison
+        run: |
+          set -euo pipefail
+          sudo apt-get install -yq --no-install-recommends flatpak
+          flatpak remote-add --if-not-exists --user flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive \
+            "org.freedesktop.Platform//${{ env.FLATPAK_RUNTIME_VERSION }}"
+
       - name: Discover + stage vendor libs
-        env:
-          HOMESCREEN_BIN: ${{ steps.arch-paths.outputs.homescreen_bin }}
-          IHS_SHARED_DIR: ${{ steps.arch-paths.outputs.ihs_shared_dir }}
-          AGL_LIB_DIR: ${{ steps.arch-paths.outputs.wayland_lib_dir }}
-          TOOLCHAIN_LIB_DIR: ${{ steps.homescreen.outputs.toolchain-lib-dir }}
         run: |
           ./scripts/02-discover-vendor-libs.sh
           ./scripts/03-stage-vendor-libs.sh

@@ -10,7 +10,7 @@ if ! command -v flatpak-builder >/dev/null 2>&1; then
 fi
 
 MISSING=()
-for v in APP_DIR HOMESCREEN_BIN IHS_SHARED_DIR AGL_LIB_DIR TOOLCHAIN_LIB_DIR; do
+for v in APP_DIR IHS_DIR; do
   [[ -n "${!v:-}" ]] || MISSING+=("$v")
 done
 if (( ${#MISSING[@]} )); then
@@ -18,7 +18,7 @@ if (( ${#MISSING[@]} )); then
   printf '  %s\n' "${MISSING[@]}" >&2
   exit 1
 fi
-export APP_DIR HOMESCREEN_BIN IHS_SHARED_DIR AGL_LIB_DIR TOOLCHAIN_LIB_DIR
+export APP_DIR IHS_DIR
 
 "$PKG_DIR/scripts/01-build-flutter-bundle.sh"
 "$PKG_DIR/scripts/02-discover-vendor-libs.sh"

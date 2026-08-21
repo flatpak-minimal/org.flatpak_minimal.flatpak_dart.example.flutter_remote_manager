@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${HOMESCREEN_BIN:?must be set - path to the built homescreen binary}"
+PKG_DIR_EARLY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "$PKG_DIR_EARLY/staging/emb-paths.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$PKG_DIR_EARLY/staging/emb-paths.env"
+fi
+
+: "${HOMESCREEN_BIN:?must be set - path to the built homescreen binary (or run 01 first)}"
 HOMESCREEN="$HOMESCREEN_BIN"
 RUNTIME_REF="${RUNTIME_REF:-org.freedesktop.Platform//25.08}"
 ARCH_TRIPLET="$(uname -m)-linux-gnu"
@@ -15,7 +21,18 @@ if [[ ! -x "$HOMESCREEN" ]]; then
   exit 1
 fi
 
-RUNTIME_DIR="$(flatpak info --user --show-location "$RUNTIME_REF")"
+if ! command -v flatpak >/dev/null; then
+  echo "ERROR: flatpak not found - needed to locate the runtime tree so we can tell" >&2
+  echo "       which libraries it already provides. Install flatpak and the runtime:" >&2
+  echo "       flatpak install --user org.freedesktop.Platform//<version>" >&2
+  exit 1
+fi
+
+if ! RUNTIME_DIR="$(flatpak info --user --show-location "$RUNTIME_REF" 2>/dev/null)"; then
+  echo "ERROR: runtime $RUNTIME_REF is not installed - install it with:" >&2
+  echo "       flatpak install --user $RUNTIME_REF" >&2
+  exit 1
+fi
 echo "Runtime tree: $RUNTIME_DIR/files"
 
 mkdir -p "$PKG_DIR/staging"
@@ -31,6 +48,26 @@ declare -A VISITED_FILES
 declare -A VENDOR_SET
 
 SEEDS=("$HOMESCREEN")
+
+BUNDLE_LIB="$PKG_DIR/staging/bundle/lib"
+NATIVE_ASSETS_FILE="$PKG_DIR/staging/native-assets.txt"
+if [[ ! -d "$BUNDLE_LIB" ]]; then
+  echo "ERROR: $BUNDLE_LIB not found - run 01-build-flutter-bundle.sh first" >&2
+  exit 1
+fi
+if [[ ! -f "$NATIVE_ASSETS_FILE" ]]; then
+  echo "ERROR: $NATIVE_ASSETS_FILE not found - run 01-build-flutter-bundle.sh first" >&2
+  exit 1
+fi
+while read -r f; do
+  [[ -z "$f" ]] && continue
+  if [[ ! -f "$BUNDLE_LIB/$f" ]]; then
+    echo "ERROR: $f missing from $BUNDLE_LIB" >&2
+    exit 1
+  fi
+  SEEDS+=("$BUNDLE_LIB/$f")
+done < "$NATIVE_ASSETS_FILE"
+
 if [ "${VENDOR_DEV_GPU_STACK:-0}" = "1" ]; then
   SEEDS+=(
     "$GL_LIB_DIR/libEGL.so.1"
