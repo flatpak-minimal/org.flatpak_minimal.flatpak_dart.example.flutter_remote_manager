@@ -1,19 +1,8 @@
 #!/usr/bin/env bash
-# Computes the full transitive closure of shared libraries needed by
-# homescreen AND the extra Mesa/GL libraries we vendor explicitly (which
-# aren't linked deps of homescreen itself — they're loaded at runtime via
-# libglvnd/DRI, so ldd on homescreen alone can't see them). Diffs that
-# closure against the installed org.freedesktop.Platform//25.08 runtime tree
-# and emits staging/vendor-libs.txt listing every lib NOT already provided by
-# the runtime.
-#
-# This does not guess — it queries the actual deployed runtime files. Review
-# the output manually before trusting it, especially for TLS/crypto/curl/
-# systemd libs where a version mismatch can segfault instead of failing to
-# load cleanly.
 set -euo pipefail
 
-HOMESCREEN="${HOMESCREEN_BIN:-/home/wafdy/workspace-automation/app/ivi-homescreen/build/shell/homescreen}"
+: "${HOMESCREEN_BIN:?must be set - path to the built homescreen binary}"
+HOMESCREEN="$HOMESCREEN_BIN"
 RUNTIME_REF="${RUNTIME_REF:-org.freedesktop.Platform//25.08}"
 ARCH_TRIPLET="$(uname -m)-linux-gnu"
 GL_LIB_DIR="${GL_LIB_DIR:-/lib/$ARCH_TRIPLET}"
@@ -41,13 +30,6 @@ is_runtime_provided() {
 declare -A VISITED_FILES
 declare -A VENDOR_SET
 
-# Seeds: homescreen itself always. The Mesa/glvnd libraries are only relevant
-# when the dev-only GPU workaround profile is active (see
-# 03-stage-vendor-libs.sh's VENDOR_DEV_GPU_STACK gate) — they're dlopen'd at
-# runtime, not linked deps of homescreen, so their own transitive deps are
-# otherwise invisible to ldd. Skip them in the production default so
-# vendor-libs.txt doesn't list GPU-only deps (e.g. libLLVM-15, Mesa's shader
-# compiler) that 03 would then have nothing to do with.
 SEEDS=("$HOMESCREEN")
 if [ "${VENDOR_DEV_GPU_STACK:-0}" = "1" ]; then
   SEEDS+=(
@@ -81,7 +63,6 @@ while [[ ${#QUEUE[@]} -gt 0 ]]; do
       echo "VENDOR-NEEDED:    $lib"
       VENDOR_SET[$lib]=1
       echo "$lib" >> "$OUT"
-      # Resolve this lib's own file to recurse into its dependencies too.
       libpath=$(ldd "$realfile" 2>/dev/null | awk -v l="$lib" '$1==l{print $3}')
       [[ -n "$libpath" ]] && QUEUE+=("$libpath")
     fi

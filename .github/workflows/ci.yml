@@ -20,10 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # aarch64 runs under QEMU emulation on this x86_64 GitHub-hosted runner
-      # — feasible here because flatpak-builder only *packages* pinned
-      # prebuilt artifacts (see org.agl.FlatpakAppStore.yml), it doesn't
-      # compile anything; no self-hosted aarch64 runner needed for this job.
       - name: Install docker
         if: ${{ matrix.arch != 'x86_64' }}
         run: |
@@ -39,8 +35,8 @@ jobs:
       - name: Build flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: org.agl.FlatpakAppStore-${{ matrix.arch }}.flatpak
-          manifest-path: org.agl.FlatpakAppStore.yml
+          bundle: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager-${{ matrix.arch }}.flatpak
+          manifest-path: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager.yml
           cache-key: flatpak-builder-${{ matrix.arch }}-${{ github.sha }}
           arch: ${{ matrix.arch }}
 
@@ -48,14 +44,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flatpak-${{ matrix.arch }}
-          path: org.agl.FlatpakAppStore-${{ matrix.arch }}.flatpak
+          path: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager-${{ matrix.arch }}.flatpak
 
-      # Publishes every push to flat-manager (e.g. a beta/nightly channel).
-      # flat-manager isn't deployed yet — FLAT_MANAGER_URL/TOKEN are unset
-      # placeholders, so this step is expected to fail until it's configured
-      # (repo secrets: FLAT_MANAGER_URL, FLAT_MANAGER_TOKEN; repo variable:
-      # FLAT_MANAGER_REPOSITORY). continue-on-error keeps that from blocking
-      # the rest of CI in the meantime — see CI.md "flat-manager".
       - name: Deploy to flat-manager
         continue-on-error: true
         uses: flatpak/flatpak-github-actions/flat-manager@v6

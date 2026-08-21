@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Runs the full pipeline: assemble the Flutter bundle, discover vendor libs,
-# stage them, then build and --user install the Flatpak.
-#
-# Prerequisite (one-time): sudo apt install flatpak-builder
 set -euo pipefail
 
 PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,12 +9,23 @@ if ! command -v flatpak-builder >/dev/null 2>&1; then
   exit 1
 fi
 
+MISSING=()
+for v in APP_DIR HOMESCREEN_BIN IHS_SHARED_DIR AGL_LIB_DIR TOOLCHAIN_LIB_DIR; do
+  [[ -n "${!v:-}" ]] || MISSING+=("$v")
+done
+if (( ${#MISSING[@]} )); then
+  echo "ERROR: set the following before running (see README):" >&2
+  printf '  %s\n' "${MISSING[@]}" >&2
+  exit 1
+fi
+export APP_DIR HOMESCREEN_BIN IHS_SHARED_DIR AGL_LIB_DIR TOOLCHAIN_LIB_DIR
+
 "$PKG_DIR/scripts/01-build-flutter-bundle.sh"
 "$PKG_DIR/scripts/02-discover-vendor-libs.sh"
 "$PKG_DIR/scripts/03-stage-vendor-libs.sh"
 
 FLATPAK_ARCH="${FLATPAK_ARCH:-$(flatpak --default-arch)}"
-flatpak-builder --arch="$FLATPAK_ARCH" --user --install --force-clean build-dir org.agl.FlatpakAppStore.dev.yml
+flatpak-builder --arch="$FLATPAK_ARCH" --user --install --force-clean build-dir org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager.dev.yml
 
 echo
-echo "Done. Launch with: flatpak run org.agl.FlatpakAppStore"
+echo "Done. Launch with: flatpak run org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager"

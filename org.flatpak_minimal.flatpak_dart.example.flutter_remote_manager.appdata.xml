@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.agl.FlatpakAppStore</id>
+  <id>org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>Apache-2.0</project_license>
   <name>AGL Flatpak App Store</name>
@@ -13,7 +13,7 @@
       applications from within the vehicle head unit.
     </p>
   </description>
-  <launchable type="desktop-id">org.agl.FlatpakAppStore.desktop</launchable>
+  <launchable type="desktop-id">org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager.desktop</launchable>
   <content_rating type="oars-1.1"/>
   <releases>
     <release version="1.0.0" date="2026-08-07"/>

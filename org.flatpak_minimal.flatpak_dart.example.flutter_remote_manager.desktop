@@ -3,6 +3,6 @@ Type=Application
 Name=AGL Flatpak App Store
 Comment=Browse, install, and manage Flatpak applications
 Exec=flatpak-app-store
-Icon=org.agl.FlatpakAppStore
+Icon=org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager
 Terminal=false
 Categories=System;PackageManager;
