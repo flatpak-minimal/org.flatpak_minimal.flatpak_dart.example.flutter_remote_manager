@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${HOMESCREEN_BIN:?must be set - path to the built homescreen binary}"
-: "${IHS_SHARED_DIR:?must be set - path to the built ivi-homescreen shared dir}"
-: "${AGL_LIB_DIR:?must be set - path to the AGL wayland lib dir}"
-: "${TOOLCHAIN_LIB_DIR:?must be set - path to the LLVM toolchain lib dir containing libc++abi.so*}"
+PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "$PKG_DIR/staging/emb-paths.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$PKG_DIR/staging/emb-paths.env"
+fi
+
+: "${HOMESCREEN_BIN:?must be set - path to the built homescreen binary (or run 01 first)}"
+: "${IHS_SHARED_DIR:?must be set - path to the built ivi-homescreen shared dir (or run 01 first)}"
 HOMESCREEN="$HOMESCREEN_BIN"
 
-for d in "$IHS_SHARED_DIR" "$AGL_LIB_DIR" "$TOOLCHAIN_LIB_DIR"; do
-  if [[ ! -d "$d" ]]; then
-    echo "ERROR: directory does not exist: $d" >&2
-    exit 1
-  fi
-done
-
-PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ ! -d "$IHS_SHARED_DIR" ]]; then
+  echo "ERROR: directory does not exist: $IHS_SHARED_DIR" >&2
+  exit 1
+fi
 VENDOR_DIR="$PKG_DIR/staging/vendor-lib"
 BIN_DIR="$PKG_DIR/staging/vendor-bin"
 VENDOR_LIST="$PKG_DIR/staging/vendor-libs.txt"
@@ -31,33 +31,6 @@ mkdir -p "$VENDOR_DIR" "$BIN_DIR" "$MESA_JSON_DIR"
 cp -a "$HOMESCREEN" "$BIN_DIR/"
 
 cp -a "$IHS_SHARED_DIR"/libihs_shared.so* "$VENDOR_DIR/"
-
-for soname in libwayland-client.so.0 libwayland-egl.so.1 libwayland-cursor.so.0; do
-  if [[ ! -e "$AGL_LIB_DIR/$soname" ]]; then
-    echo "ERROR: $soname not found in AGL_LIB_DIR=$AGL_LIB_DIR" >&2
-    exit 1
-  fi
-  realsrc=$(readlink -f "$AGL_LIB_DIR/$soname")
-  cp -a "$realsrc" "$VENDOR_DIR/$(basename "$realsrc")"
-  if [[ "$(basename "$realsrc")" != "$soname" ]]; then
-    ln -sf "$(basename "$realsrc")" "$VENDOR_DIR/$soname"
-  fi
-done
-
-cp -a "$TOOLCHAIN_LIB_DIR"/libc++.so* "$TOOLCHAIN_LIB_DIR"/libc++abi.so* "$TOOLCHAIN_LIB_DIR"/libunwind.so* "$VENDOR_DIR/"
-
-NATIVE_ASSETS_DIR="$PKG_DIR/staging/bundle/data/flutter_assets/native_assets/linux"
-if [[ ! -d "$NATIVE_ASSETS_DIR" ]]; then
-  echo "ERROR: $NATIVE_ASSETS_DIR not found — run 01-build-flutter-bundle.sh first" >&2
-  exit 1
-fi
-for f in libflatpak_nc.so libappstream.so libsqlite3.so; do
-  if [[ ! -f "$NATIVE_ASSETS_DIR/$f" ]]; then
-    echo "ERROR: $f missing from $NATIVE_ASSETS_DIR — the app's FFI layer will fail at flatpak_bridge_init" >&2
-    exit 1
-  fi
-  cp -a "$NATIVE_ASSETS_DIR/$f" "$VENDOR_DIR/"
-done
 
 if [ "${VENDOR_DEV_GPU_STACK:-0}" = "1" ]; then
   ARCH_TRIPLET="$(uname -m)-linux-gnu"
@@ -86,8 +59,18 @@ while read -r lib; do
   set +o pipefail
   src=$(ldconfig -p | awk -v l="$lib" '$1==l{print $NF; exit}')
   set -o pipefail
+
   if [[ -z "$src" || ! -e "$src" ]]; then
-    echo "WARN: could not resolve $lib via ldconfig — check manually" >&2
+    IFS=':' read -r -a extra_dirs <<< "${EXTRA_LIB_PATH:-}${EXTRA_LIB_PATH:+:}${LD_LIBRARY_PATH:-}"
+    for d in "${extra_dirs[@]}"; do
+      [[ -n "$d" && -e "$d/$lib" ]] || continue
+      src="$d/$lib"
+      break
+    done
+  fi
+
+  if [[ -z "$src" || ! -e "$src" ]]; then
+    echo "WARN: could not resolve $lib — not on the ldconfig path, EXTRA_LIB_PATH or LD_LIBRARY_PATH" >&2
     continue
   fi
   realsrc=$(readlink -f "$src")

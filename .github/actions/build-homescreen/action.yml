@@ -1,13 +1,13 @@
-name: "Build homescreen via emb_cli"
+name: "Set up emb_cli and ivi-homescreen"
 description: >
-  Builds ivi-homescreen for a given arch using toyota-connected/emb_cli
-  (`emb cross`), replacing the old hand-rolled LLVM-toolchain-download +
-  cmake/ninja recipe. The flatpak plugin is no longer compiled in — the
-  Flutter side now talks to Flatpak directly via the flatpak_dart FFI
-  package — so this action no longer checks out ivi-homescreen-plugins or
-  sets BUILD_PLUGIN_FLATPAK/PLUGINS_DIR. Works for both x86_64 and aarch64
-  as long as it runs on a runner matching the target arch (both matrix legs
-  in build-artifacts.yml build natively, not cross-compiled).
+  Installs host build dependencies, checks out ivi-homescreen, bootstraps
+  toyota-connected/emb_cli, and drops emb's cross manifest next to the
+  ivi-homescreen source. The actual build happens in
+  scripts/01-build-flutter-bundle.sh, which runs a single `emb cross --build
+  --app` producing both the embedder and the app bundle.
+
+  Dependencies are installed with apt rather than `emb deps`, because emb's
+  package backend is PackageKit and hosted runners have no PackageKit daemon.
 
 inputs:
   homescreen-ref:
@@ -16,27 +16,26 @@ inputs:
   emb-cli-ref:
     description: "git ref of toyota-connected/emb_cli to bootstrap"
     required: true
-  emb-target:
-    description: >
-      emb_cli --target name to build. "local" builds natively for the
-      runner's own arch — verify against ivi-homescreen's .emb/*.emb.yaml on
-      first real run in case it needs an explicit board/OS target instead.
-    required: true
 
 outputs:
-  homescreen-bin:
-    description: "Path to the built homescreen binary"
-    value: ${{ steps.paths.outputs.homescreen-bin }}
-  ihs-shared-dir:
-    description: "Path to the built shared/ dir (libihs_shared.so*)"
-    value: ${{ steps.paths.outputs.ihs-shared-dir }}
-  toolchain-lib-dir:
-    description: "Path to the LLVM toolchain lib dir holding libc++/libc++abi/libunwind"
-    value: ${{ steps.toolchain.outputs.toolchain-lib-dir }}
+  ihs-dir:
+    description: "Path to the ivi-homescreen checkout with the cross manifest in place"
+    value: ${{ steps.prep.outputs.ihs-dir }}
 
 runs:
   using: "composite"
   steps:
+    - name: Install host build dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -yq --no-install-recommends \
+          pkg-config libegl-dev libgles2-mesa-dev libdrm-dev libgbm-dev \
+          libinput-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+          libudev-dev libasio-dev libflatpak-dev libglib2.0-dev \
+          libpugixml-dev libseat-dev libdisplay-info-dev libxcursor-dev
+
     - name: Fetch ivi-homescreen
       uses: actions/checkout@v5
       with:
@@ -57,37 +56,11 @@ runs:
         command -v emb
         dirname "$(command -v emb)" >> "$GITHUB_PATH"
 
-    - name: emb doctor
-      shell: bash
-      run: emb doctor
-
-    - name: Cross-compile homescreen
-      shell: bash
-      working-directory: ${{ github.workspace }}/ivi-homescreen
-      run: emb cross . --target "${{ inputs.emb-target }}" --build
-
-    - name: Resolve toolchain lib dir
-      id: toolchain
+    - name: Stage the cross manifest
+      id: prep
       shell: bash
       run: |
         set -euo pipefail
-        FOUND=""
-        for root in "$HOME/.cache/emb" "$HOME/.local/share/emb" "$HOME/.emb" "${{ github.workspace }}/emb_cli"; do
-          [ -d "$root" ] || continue
-          FOUND=$(find "$root" -type f -name 'libc++abi.so*' -printf '%h\n' 2>/dev/null | sort -u | head -1)
-          [ -n "$FOUND" ] && break
-        done
-        if [ -z "$FOUND" ]; then
-          echo "ERROR: could not locate the emb_cli LLVM toolchain lib dir (searched for libc++abi.so*)." >&2
-          echo "Inspect the 'emb doctor' output above and update this discovery step." >&2
-          exit 1
-        fi
-        echo "Found toolchain lib dir: $FOUND"
-        echo "toolchain-lib-dir=$FOUND" >> "$GITHUB_OUTPUT"
-
-    - name: Resolve output paths
-      id: paths
-      shell: bash
-      run: |
-        echo "homescreen-bin=${{ github.workspace }}/ivi-homescreen/build/shell/homescreen" >> "$GITHUB_OUTPUT"
-        echo "ihs-shared-dir=${{ github.workspace }}/ivi-homescreen/build/shared" >> "$GITHUB_OUTPUT"
+        cp "${{ github.workspace }}/emb_cli/examples/cross/all-backends.emb.yaml" \
+           "${{ github.workspace }}/ivi-homescreen/"
+        echo "ihs-dir=${{ github.workspace }}/ivi-homescreen" >> "$GITHUB_OUTPUT"

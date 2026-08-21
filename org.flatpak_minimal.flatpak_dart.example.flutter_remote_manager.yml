@@ -28,14 +28,16 @@ modules:
     sources:
       - type: archive
         url: https://github.com/flatpak-minimal/org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager/releases/download/artifacts/homescreen-aarch64.tar.xz
-        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        sha256: "a476fb48818349f48986ec9e8c9d3c43143a598f5569e68937bb6723b62c2bfa"
         only-arches: [aarch64]
         dest: homescreen
+        strip-components: 0
       - type: archive
         url: https://github.com/flatpak-minimal/org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager/releases/download/artifacts/homescreen-x86_64.tar.xz
-        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        sha256: "1ed7e618b5b539c29567952b80bd95ebac9012855bb2b1ae1898db0fa7cf99fb"
         only-arches: [x86_64]
         dest: homescreen
+        strip-components: 0
       - type: file
         path: flatpak-app-store.sh
 
@@ -47,14 +49,16 @@ modules:
     sources:
       - type: archive
         url: https://github.com/flatpak-minimal/org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager/releases/download/artifacts/flutter-bundle-aarch64.tar.xz
-        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        sha256: "df9e4065187c5971d5d97f885cac1f15c2c7c4a91b3ca54b2738a1af4f532dc2"
         only-arches: [aarch64]
         dest: bundle
+        strip-components: 0
       - type: archive
         url: https://github.com/flatpak-minimal/org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager/releases/download/artifacts/flutter-bundle-x86_64.tar.xz
-        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        sha256: "0769d02ccd9d0b93751525d0dc33ca02a8af05c1d4d5cbd57765eb2611344ff1"
         only-arches: [x86_64]
         dest: bundle
+        strip-components: 0
 
   - name: desktop-metadata
     buildsystem: simple

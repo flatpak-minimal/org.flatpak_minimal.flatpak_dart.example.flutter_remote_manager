@@ -20,24 +20,32 @@ The scripts have no built-in paths — point them at your checkouts:
 ```sh
 sudo apt install flatpak-builder
 
+# emb_cli on PATH, then provision the SDK into this repo's workspace
+git clone https://github.com/toyota-connected/emb_cli
+eval "$(emb_cli/bootstrap.sh --shellenv)"
+FLUTTER_WORKSPACE=$PWD/staging/emb-workspace emb flutter --flutter-version 3.44.2
+
+# ivi-homescreen, with emb's cross manifest alongside it
+git clone --recurse-submodules https://github.com/toyota-connected/ivi-homescreen
+cp emb_cli/examples/cross/all-backends.emb.yaml ivi-homescreen/
+
 export APP_DIR=/path/to/flutter_remote_manager
-export HOMESCREEN_BIN=/path/to/ivi-homescreen/build/shell/homescreen
-export IHS_SHARED_DIR=/path/to/ivi-homescreen/build/shared
-export AGL_LIB_DIR=/usr/lib/$(uname -m)-linux-gnu
-export TOOLCHAIN_LIB_DIR=/path/to/llvm/lib/$(uname -m)-unknown-linux-gnu
+export IHS_DIR=$PWD/ivi-homescreen
 
 VENDOR_DEV_GPU_STACK=1 ./scripts/04-build-and-install.sh
 flatpak run org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager
 ```
 
-Anything unset stops the build with a message naming it. You also need `emb`
-([emb_cli](https://github.com/toyota-connected/emb_cli)) on `PATH` — it builds the app
-and provisions the Flutter engine.
+Anything unset stops the build with a message naming it.
 
-`scripts/04` runs 01 (build the Flutter bundle via `emb bundle`), 02 (work out which
-shared libs the runtime doesn't provide), and 03 (stage them, plus the FFI libraries the
-app `dlopen`s), then builds the dev manifest. `05` makes a `.flatpak` bundle; `06` makes
-the tarballs CI publishes.
+`scripts/04` runs 01 (one `emb cross --build --app`, producing the embedder and the
+bundle — engine, AOT snapshot, assets and the app's FFI libraries), 02 (work out which
+shared libs the runtime doesn't provide), and 03 (stage them), then builds the dev
+manifest. `05` makes a `.flatpak` bundle; `06` makes the tarballs CI publishes.
+
+`scripts/01` pins `FLUTTER_WORKSPACE` to `staging/emb-workspace` and ignores an
+inherited value. emb reuses whatever engine artifacts it finds in a workspace, and a
+mismatched set fails later at Dart VM init rather than at build time.
 
 `VENDOR_DEV_GPU_STACK=1` is only needed on this dev VM — its virtio-gpu/virgl Mesa is
 too old for the runtime's GL extension, so EGL config negotiation fails. Real hardware
