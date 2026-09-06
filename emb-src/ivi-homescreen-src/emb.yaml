@@ -1,0 +1,12 @@
+# Where the embedder source comes from. `scripts/build.sh` runs
+#
+#   emb sync -p emb-src -w <workspace>
+#
+# which clones this into <workspace>/app/ivi-homescreen. Bump `rev` to move the
+# embedder; nothing else references it.
+id: ivi-homescreen-src
+type: app
+src:
+  - uri: https://github.com/toyota-connected/ivi-homescreen.git
+    rev: e48ec1c001c6170bd45a5530bf1c32341a55bf76
+    submodules: true

@@ -1,6 +1,0 @@
-{
-    "file_format_version" : "1.0.0",
-    "ICD" : {
-        "library_path" : "/app/lib/libEGL_mesa.so.0"
-    }
-}

@@ -1,0 +1,81 @@
+# The whole packaging pipeline for the Flutter Remote Manager flatpak.
+#
+# One `emb cross` invocation cross-builds ivi-homescreen, builds the Flutter app
+# (including the Dart build hooks that produce flatpak_dart's FFI libraries),
+# assembles the runnable bundle, vendors what org.freedesktop.Platform does not
+# ship, and emits a single-file .flatpak:
+#
+#   emb cross flatpak-app-store.emb.yaml --target local --mode release \
+#     --build --app <flutter_remote_manager> --flatpak
+#
+# The manifest has to sit at the ivi-homescreen source root: `emb cross <file>`
+# uses the file's parent directory as the CMake source dir, and `icon:`/`files:`
+# resolve against that same directory. scripts/build.sh stages this whole
+# directory there.
+id: flatpak-app-store
+type: app
+supported_archs: [arm64, x86_64]
+supported_host_types: [ubuntu, fedora]
+
+cross:
+  provider: arm-gnu              # required to parse; ignored for --target local
+  defines:
+    DISABLE_PLUGINS: 'ON'
+    # agl_shell may only be bound by one client, and on a real AGL image the
+    # launcher already owns it — binding it aborts the whole connection. This
+    # app runs alongside the launcher, so compile that client out and use xdg.
+    ENABLE_AGL_SHELL_CLIENT: 'OFF'
+    ENABLE_XDG_CLIENT: 'ON'
+  backends:
+    # One backend only: it keeps the app id unsuffixed and the runnable dir
+    # plain `runnable/`. A second entry here is all another backend needs.
+    wayland-egl:
+      BUILD_BACKEND_WAYLAND_EGL: 'ON'
+      BUILD_BACKEND_WAYLAND_VULKAN: 'OFF'
+
+  package:
+    name: Flutter Remote Manager
+    version: 1.0.0
+    bin: shell/homescreen
+    # No `files:` entry for the appdata. It is kept beside this manifest as the
+    # app's metadata of record, but installing it into /app/share/metainfo makes
+    # flatpak-builder run appstream-compose, which the freedesktop SDK does not
+    # ship — the build fails.
+    flatpak:
+      app_id: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager
+      runtime: org.freedesktop.Platform
+      runtime_version: '25.08'
+      sdk: org.freedesktop.Sdk
+      icon: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager.png
+      categories: [System, PackageManager]
+      # The runtime is not the sysroot: emb walks the bundle's DT_NEEDED closure
+      # (embedder, engine, and the build hooks' code assets), subtracts what the
+      # runtime provides, and copies the rest into lib/, where the bundle's
+      # $ORIGIN/lib rpath already looks.
+      vendor_libs: auto
+      env:
+        IHS_LOG_LEVEL: info
+        # Dart dlopen()s the build hooks' code assets by bare soname
+        # (libflatpak_nc.so, libappstream.so, libsqlite3.so). The bundle's
+        # $ORIGIN/lib rpath covers the DT_NEEDED case; this covers the dlopen
+        # one, where the resolving caller may carry no rpath of its own.
+        LD_LIBRARY_PATH: /app/org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager/lib
+        # The runtime's GIO tries to talk to a proxy resolver over the session
+        # bus that this sandbox has no portal for; the dummy resolver skips it.
+        GIO_USE_PROXY_RESOLVER: dummy
+        XDG_DATA_HOME: $HOME/.local/share
+      args:
+        - --backend=wayland-egl
+        - --shell=xdg
+        - --app-id=org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager
+      finish_args:
+        - --socket=wayland
+        - --device=dri
+        - --share=network
+        # The app manages flatpaks on the host: it needs the system bus, the
+        # Flatpak name, and read access to both installation roots.
+        - --socket=session-bus
+        - --socket=system-bus
+        - --talk-name=org.freedesktop.Flatpak
+        - --filesystem=~/.local/share/flatpak
+        - --filesystem=/var/lib/flatpak:ro

@@ -1,50 +1,79 @@
 name: ci
 
+# One workflow, because there is now one build. emb cross produces the .flatpak
+# directly, so there is no intermediate tarball release to publish and no
+# sha256 to pin back into a manifest.
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch: {}
 
 jobs:
   flatpak:
     name: "Flatpak (${{ matrix.arch }})"
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
-      options: --privileged
     strategy:
-      matrix:
-        arch: [x86_64, aarch64]
       fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout this repo
+        uses: actions/checkout@v5
 
-      - name: Install docker
-        if: ${{ matrix.arch != 'x86_64' }}
+      - name: Load versions.env
+        run: grep -Ev '^[[:space:]]*(#|$)' versions.env >> "$GITHUB_ENV"
+
+      - name: Checkout the app at pinned ref
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.APP_REPO }}
+          ref: ${{ env.APP_REF }}
+          path: app
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up emb_cli
+        uses: ./.github/actions/build-homescreen
+        with:
+          emb-cli-ref: ${{ env.EMB_CLI_REF }}
+
+      - name: Provision Flutter SDK
+        env:
+          FLUTTER_WORKSPACE: ${{ github.workspace }}/staging/emb-workspace
         run: |
-          curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
-          tar xzvf docker.tgz
-          mv docker/* /usr/bin
-      - name: Set up QEMU
-        if: ${{ matrix.arch != 'x86_64' }}
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+          mkdir -p "$FLUTTER_WORKSPACE"
+          emb flutter --flutter-version "${{ env.FLUTTER_VERSION }}"
 
-      - name: Build flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          bundle: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager-${{ matrix.arch }}.flatpak
-          manifest-path: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager.yml
-          cache-key: flatpak-builder-${{ matrix.arch }}-${{ github.sha }}
-          arch: ${{ matrix.arch }}
+      # emb needs flatpak-builder to build the bundle, and the runtime itself to
+      # know which libraries it already provides (package.flatpak.vendor_libs).
+      - name: Install flatpak-builder and the runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -yq --no-install-recommends flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive \
+            "org.freedesktop.Platform//${{ env.FLATPAK_RUNTIME_VERSION }}" \
+            "org.freedesktop.Sdk//${{ env.FLATPAK_RUNTIME_VERSION }}"
+
+      - name: Build the flatpak
+        env:
+          APP_DIR: ${{ github.workspace }}/app
+          EMB_TARGET: ${{ env.EMB_TARGET }}
+        run: ./scripts/build.sh
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
         with:
           name: flatpak-${{ matrix.arch }}
-          path: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager-${{ matrix.arch }}.flatpak
+          path: dist/*.flatpak
 
       - name: Deploy to flat-manager
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -1,26 +1,17 @@
 name: "Set up emb_cli and ivi-homescreen"
 description: >
-  Installs host build dependencies, checks out ivi-homescreen, bootstraps
-  toyota-connected/emb_cli, and drops emb's cross manifest next to the
-  ivi-homescreen source. The actual build happens in
-  scripts/01-build-flutter-bundle.sh, which runs a single `emb cross --build
-  --app` producing both the embedder and the app bundle.
+  Installs host build dependencies and bootstraps toyota-connected/emb_cli. The
+  build itself is scripts/build.sh, which clones the embedder with `emb sync`
+  (pinned in emb-src/), stages this repo's emb/ manifest into it, and runs a
+  single `emb cross --build --app --flatpak`.
 
   Dependencies are installed with apt rather than `emb deps`, because emb's
   package backend is PackageKit and hosted runners have no PackageKit daemon.
 
 inputs:
-  homescreen-ref:
-    description: "git ref of ivi-homescreen to build against"
-    required: true
   emb-cli-ref:
     description: "git ref of toyota-connected/emb_cli to bootstrap"
     required: true
-
-outputs:
-  ihs-dir:
-    description: "Path to the ivi-homescreen checkout with the cross manifest in place"
-    value: ${{ steps.prep.outputs.ihs-dir }}
 
 runs:
   using: "composite"
@@ -34,17 +25,8 @@ runs:
           pkg-config libegl-dev libgles2-mesa-dev libdrm-dev libgbm-dev \
           libinput-dev libxkbcommon-dev libwayland-dev wayland-protocols \
           libudev-dev libasio-dev libflatpak-dev libglib2.0-dev \
-          libpugixml-dev libseat-dev libdisplay-info-dev libxcursor-dev
-
-    - name: Fetch ivi-homescreen
-      uses: actions/checkout@v5
-      with:
-        repository: toyota-connected/ivi-homescreen
-        path: ivi-homescreen
-        ref: ${{ inputs.homescreen-ref }}
-        fetch-depth: 1
-        submodules: true
-        persist-credentials: false
+          libpugixml-dev libseat-dev libdisplay-info-dev libxcursor-dev \
+          elfutils
 
     - name: Bootstrap emb_cli
       shell: bash
@@ -55,12 +37,3 @@ runs:
         eval "$("${{ github.workspace }}/emb_cli/bootstrap.sh" --shellenv)"
         command -v emb
         dirname "$(command -v emb)" >> "$GITHUB_PATH"
-
-    - name: Stage the cross manifest
-      id: prep
-      shell: bash
-      run: |
-        set -euo pipefail
-        cp "${{ github.workspace }}/emb_cli/examples/cross/all-backends.emb.yaml" \
-           "${{ github.workspace }}/ivi-homescreen/"
-        echo "ihs-dir=${{ github.workspace }}/ivi-homescreen" >> "$GITHUB_OUTPUT"
