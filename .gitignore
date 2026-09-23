@@ -1,5 +1,3 @@
-# Everything the pipeline produces. emb owns staging/ (workspace, engine,
-# build trees); scripts/build.sh collects the bundle into dist/.
 staging/
 dist/
 *.flatpak
