@@ -75,6 +75,18 @@ entries, not scripts: another backend is one more key under `backends:`, another
 `cross.targets:` entry, and app-specific `-dev` packages belong in the app's own
 `.emb/*.emb.yaml`, which emb merges over the target.
 
+## Extra-data apps
+
+Extra-data apps (Chrome, Spotify, Zoom) are unpacked at install time by `apply_extra`, which
+libflatpak runs in bwrap. There is no bwrap inside this sandbox, so `FLATPAK_BWRAP` points
+libflatpak at `bwrap-host`, which runs the host's bwrap through the `org.freedesktop.Flatpak`
+host command. The install itself stays in libflatpak and the user installation.
+
+A D-Bus message carries only a few fds (more and the bus drops the connection: `Portal call
+failed: The connection is closed`), so `bwrap-host` binds installation directories by path,
+copies generated files to the app's cache, and forwards only `--seccomp`.
+`BWRAP_HOST_DEBUG=1` prints what it runs.
+
 ## CI
 
 `ci.yml` builds natively per arch (x86_64 on `ubuntu-latest`, aarch64 on `ubuntu-24.04-arm`)

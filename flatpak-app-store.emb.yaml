@@ -37,7 +37,7 @@ cross:
   # drift into a build. `--app <dir>` overrides this for local work.
   app:
     uri: https://github.com/flatpak-minimal/flutter_remote_manager.git
-    branch: main 
+    rev: 319911e3ced11f0ed96d86dc706dbadbd1c54cc4
 
   defines:
     DISABLE_PLUGINS: 'ON'
@@ -61,6 +61,9 @@ cross:
     # app's metadata of record, but installing it into /app/share/metainfo makes
     # flatpak-builder run appstream-compose, which the freedesktop SDK does not
     # ship, and the build fails.
+    files:
+      # Host bwrap for extra-data installs; see README.
+      bwrap-host: { to: bin/bwrap-host, mode: '0755' }
     flatpak:
       app_id: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager
       runtime: org.freedesktop.Platform
@@ -79,6 +82,7 @@ cross:
         # bus that this sandbox has no portal for; the dummy resolver skips it.
         GIO_USE_PROXY_RESOLVER: dummy
         XDG_DATA_HOME: $HOME/.local/share
+        FLATPAK_BWRAP: /app/bin/bwrap-host
       args:
         - --backend=wayland-egl
         - --shell=xdg
