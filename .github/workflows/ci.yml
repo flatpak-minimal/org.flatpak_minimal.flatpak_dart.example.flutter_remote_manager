@@ -1,52 +1,80 @@
 name: ci
 
+# One job, because there is one command. flatpak-app-store.emb.yaml pins
+# the embedder, the app, the Flutter SDK and the runtime; everything below is
+# host setup around a single `emb cross`.
 on:
   push:
-    branches: ['**']
+    branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch: {}
+
+env:
+  # The one pin that belongs to CI rather than to the build: which emb_cli
+  # builds this. A tag or branch, since `git clone --branch` will not take a sha.
+  EMB_CLI_REF: main
+  FLATPAK_RUNTIME_VERSION: '25.08'
 
 jobs:
   flatpak:
     name: "Flatpak (${{ matrix.arch }})"
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
-      options: --privileged
     strategy:
-      matrix:
-        arch: [x86_64, aarch64]
       fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Install docker
-        if: ${{ matrix.arch != 'x86_64' }}
+      # apt rather than `emb deps`: emb's package backend is PackageKit and
+      # hosted runners have no PackageKit daemon.
+      - name: Install host build dependencies
         run: |
-          curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
-          tar xzvf docker.tgz
-          mv docker/* /usr/bin
-      - name: Set up QEMU
-        if: ${{ matrix.arch != 'x86_64' }}
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -yq --no-install-recommends \
+            pkg-config libegl-dev libgles2-mesa-dev libdrm-dev libgbm-dev \
+            libinput-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libudev-dev libasio-dev libflatpak-dev libglib2.0-dev \
+            libpugixml-dev libseat-dev libdisplay-info-dev libxcursor-dev \
+            elfutils flatpak flatpak-builder
 
-      - name: Build flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          bundle: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager-${{ matrix.arch }}.flatpak
-          manifest-path: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager.yml
-          cache-key: flatpak-builder-${{ matrix.arch }}-${{ github.sha }}
-          arch: ${{ matrix.arch }}
+      # emb needs flatpak-builder to build the bundle, and the runtime itself to
+      # know which libraries it already provides (package.flatpak.vendor_libs).
+      - name: Install the flatpak runtime
+        run: |
+          set -euo pipefail
+          flatpak remote-add --if-not-exists --user flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive \
+            "org.freedesktop.Platform//${FLATPAK_RUNTIME_VERSION}" \
+            "org.freedesktop.Sdk//${FLATPAK_RUNTIME_VERSION}"
+
+      - name: Bootstrap emb_cli
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$EMB_CLI_REF" \
+            https://github.com/toyota-connected/emb_cli.git "$RUNNER_TEMP/emb_cli"
+          eval "$("$RUNNER_TEMP/emb_cli/bootstrap.sh" --shellenv)"
+          dirname "$(command -v emb)" >> "$GITHUB_PATH"
+
+      - name: Build the flatpak
+        run: emb cross flatpak-app-store.emb.yaml --target local --build --flatpak
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
         with:
           name: flatpak-${{ matrix.arch }}
-          path: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager-${{ matrix.arch }}.flatpak
+          path: staging/emb-workspace/.config/flutter_workspace/**/dist/*.flatpak
+          if-no-files-found: error
 
       - name: Deploy to flat-manager
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         continue-on-error: true
         uses: flatpak/flatpak-github-actions/flat-manager@v6
         with:
@@ -58,6 +86,8 @@ jobs:
     needs: flatpak
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -65,8 +95,13 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
+          shopt -s failglob
+          prerelease=()
+          [[ "${{ github.ref_name }}" == *-* ]] && prerelease=(--prerelease)
           gh release create "${{ github.ref_name }}" \
-            flatpak-x86_64/*.flatpak \
-            flatpak-aarch64/*.flatpak \
-            --generate-notes
+            flatpak-x86_64/cross-build-*/dist/*.flatpak \
+            flatpak-aarch64/cross-build-*/dist/*.flatpak \
+            --generate-notes "${prerelease[@]}"

@@ -1,7 +1,3 @@
 staging/
-build-dir/
-repo/
-artifacts/
-.flatpak-builder/
+dist/
 *.flatpak
-*.tar.xz
