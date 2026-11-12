@@ -14,7 +14,10 @@ env:
   # The one ref that belongs to CI rather than to the build: which emb_cli
   # builds this. A tag or branch, since `git clone --branch` will not take a sha.
   EMB_CLI_REF: main
-  FLATPAK_RUNTIME_VERSION: '25.08'
+  FLATPAK_RUNTIME_VERSION: wrynose
+  # The .flatpakrepo of the remote serving org.flatpak_minimal.Platform and
+  # .Sdk, set as a repository variable.
+  FLATPAK_MINIMAL_REPO: ${{ vars.FLATPAK_MINIMAL_REPO }}
 
 jobs:
   flatpak:
@@ -49,11 +52,15 @@ jobs:
       - name: Install the flatpak runtime
         run: |
           set -euo pipefail
-          flatpak remote-add --if-not-exists --user flathub \
-            https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y --noninteractive \
-            "org.freedesktop.Platform//${FLATPAK_RUNTIME_VERSION}" \
-            "org.freedesktop.Sdk//${FLATPAK_RUNTIME_VERSION}"
+          if [ -z "$FLATPAK_MINIMAL_REPO" ]; then
+            echo "::error::set the FLATPAK_MINIMAL_REPO repository variable"
+            exit 1
+          fi
+          flatpak remote-add --if-not-exists --user flatpak-minimal \
+            "$FLATPAK_MINIMAL_REPO"
+          flatpak install --user -y --noninteractive flatpak-minimal \
+            "org.flatpak_minimal.Platform//${FLATPAK_RUNTIME_VERSION}" \
+            "org.flatpak_minimal.Sdk//${FLATPAK_RUNTIME_VERSION}"
 
       - name: Bootstrap emb_cli
         run: |
