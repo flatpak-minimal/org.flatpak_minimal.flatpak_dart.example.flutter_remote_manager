@@ -1,0 +1,81 @@
+#!/usr/bin/bash
+# FLATPAK_BWRAP: run the host's bwrap for libflatpak's apply_extra.
+# A D-Bus message carries only a few fds, so fd binds into a flatpak
+# installation become path binds, data fds become files in this app's cache,
+# and only the rest (--seccomp) is forwarded. BWRAP_HOST_DEBUG=1 traces.
+set -u
+
+# libflatpak's environment is empty.
+PATH=/usr/bin:/bin
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/flatpak/bus}"
+home=$(cd ~ && pwd)
+app=$(sed -n 's/^name=//p' /.flatpak-info | head -n 1)
+
+# Same path on the host.
+shared() {
+    case "$1" in
+        "$home"/.local/share/flatpak/* | /var/lib/flatpak/*) return 0 ;;
+    esac
+    return 1
+}
+
+tmp=
+cleanup() { if [ -n "$tmp" ]; then rm -rf "$tmp"; fi; }
+trap cleanup EXIT
+
+args=()
+forward=()
+while [ $# -gt 0 ]; do
+    opt=$1
+    case "$opt" in
+        --ro-bind-fd | --bind-fd)
+            fd=$2 dest=$3
+            path=$(readlink "/proc/$$/fd/$fd")
+            if shared "$path"; then
+                args+=("${opt%-fd}" "$path" "$dest")
+            else
+                args+=("$opt" "$fd" "$dest")
+                forward+=("--forward-fd=$fd")
+            fi
+            shift 3
+            ;;
+        --ro-bind-data | --file | --bind-data)
+            fd=$2 dest=$3
+            if [ -z "$tmp" ]; then
+                mkdir -p "$home/.var/app/$app/cache"
+                tmp=$(mktemp -d "$home/.var/app/$app/cache/bwrap-host.XXXXXX")
+            fi
+            copy="$tmp/${#args[@]}"
+            cat "/proc/$$/fd/$fd" > "$copy"
+            case "$opt" in
+                --ro-bind-data) args+=(--ro-bind "$copy" "$dest") ;;
+                *) args+=(--bind "$copy" "$dest") ;;
+            esac
+            shift 3
+            ;;
+        --seccomp | --add-seccomp-fd | --args | --sync-fd | --block-fd | \
+        --userns-block-fd | --info-fd | --json-status-fd)
+            args+=("$opt" "$2")
+            forward+=("--forward-fd=$2")
+            shift 2
+            ;;
+        --)
+            args+=("$@")
+            break
+            ;;
+        *)
+            args+=("$opt")
+            shift
+            ;;
+    esac
+done
+
+if [ -n "${BWRAP_HOST_DEBUG:-}" ]; then
+    echo "bwrap-host: forwarding ${forward[*]:-nothing}" >&2
+    printf 'bwrap-host: bwrap' >&2
+    printf ' %q' "${args[@]}" >&2
+    echo >&2
+fi
+
+# Not exec, so cleanup runs.
+flatpak-spawn --host --watch-bus "${forward[@]}" bwrap "${args[@]}"
