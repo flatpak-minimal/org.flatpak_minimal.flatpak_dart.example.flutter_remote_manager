@@ -86,7 +86,7 @@ jobs:
         run: emb cross flatpak-app-store.emb.yaml --target local --build --flatpak
 
       - name: Upload bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flatpak-${{ matrix.arch }}
           path: staging/emb-workspace/.config/flutter_workspace/**/dist/*.flatpak
@@ -108,7 +108,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: flatpak-*
       - name: Create release
