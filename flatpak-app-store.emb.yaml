@@ -4,7 +4,7 @@
 # at the revisions declared below, provisions the Flutter SDK, cross-builds
 # ivi-homescreen, builds the app (including the Dart build hooks that produce
 # flatpak_dart's FFI libraries), assembles the runnable bundle, vendors what
-# org.freedesktop.Platform does not ship, and emits a single-file .flatpak:
+# org.flatpak_minimal.Platform does not ship, and emits a single-file .flatpak:
 #
 #   emb cross flatpak-app-store.emb.yaml --target local --build --flatpak
 #
@@ -58,16 +58,20 @@ cross:
     bin: shell/homescreen
     # No `files:` entry for the appdata. It is kept beside this manifest as the
     # app's metadata of record, but installing it into /app/share/metainfo makes
-    # flatpak-builder run appstream-compose, which the freedesktop SDK does not
-    # ship, and the build fails.
+    # flatpak-builder run appstream-compose, which the SDK does not ship, and
+    # the build fails.
     files:
       # Host bwrap for extra-data installs; see README.
       bwrap-host: { to: bin/bwrap-host, mode: '0755' }
     flatpak:
       app_id: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager
-      runtime: org.freedesktop.Platform
-      runtime_version: '25.08'
-      sdk: org.freedesktop.Sdk
+      # meta-flatpak-minimal's base runtime and its SDK, not Freedesktop's: a
+      # Wayland and Mesa userspace built by the same Yocto build as the image,
+      # so the app adds no second runtime to it. The branch is the oe-core
+      # release the runtime was built on.
+      runtime: org.flatpak_minimal.Platform
+      runtime_version: wrynose
+      sdk: org.flatpak_minimal.Sdk
       icon: org.flatpak_minimal.flatpak_dart.example.flutter_remote_manager.png
       categories: [System, PackageManager]
       # The runtime is not the sysroot: emb walks the bundle's DT_NEEDED closure

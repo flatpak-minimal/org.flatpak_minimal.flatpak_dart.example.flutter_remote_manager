@@ -14,7 +14,10 @@ env:
   # The one ref that belongs to CI rather than to the build: which emb_cli
   # builds this. A tag or branch, since `git clone --branch` will not take a sha.
   EMB_CLI_REF: main
-  FLATPAK_RUNTIME_VERSION: '25.08'
+  FLATPAK_RUNTIME_VERSION: wrynose
+  # Publishes org.flatpak_minimal.Platform and .Sdk as repo-dev-<machine>
+  # artifacts of its dispatched and release builds.
+  FLATPAK_MINIMAL_REPO: flatpak-minimal/meta-flatpak-minimal
 
 jobs:
   flatpak:
@@ -25,8 +28,10 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-latest
+            machine: qemux86-64
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            machine: qemuarm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -47,13 +52,27 @@ jobs:
       # emb needs flatpak-builder to build the bundle, and the runtime itself to
       # know which libraries it already provides (package.flatpak.vendor_libs).
       - name: Install the flatpak runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT: repo-dev-${{ matrix.machine }}
         run: |
           set -euo pipefail
-          flatpak remote-add --if-not-exists --user flathub \
-            https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y --noninteractive \
-            "org.freedesktop.Platform//${FLATPAK_RUNTIME_VERSION}" \
-            "org.freedesktop.Sdk//${FLATPAK_RUNTIME_VERSION}"
+          # The newest artifact from master; they expire after 7 days.
+          run=$(gh api "repos/$FLATPAK_MINIMAL_REPO/actions/artifacts?name=$ARTIFACT&per_page=20" \
+            --jq '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "master")][0].workflow_run.id // empty')
+          if [ -z "$run" ]; then
+            echo "::error::no unexpired $ARTIFACT artifact from master in $FLATPAK_MINIMAL_REPO; dispatch its $FLATPAK_RUNTIME_VERSION build"
+            exit 1
+          fi
+          gh run download "$run" -R "$FLATPAK_MINIMAL_REPO" -n "$ARTIFACT" -D "$RUNNER_TEMP"
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/$ARTIFACT.tar"
+          rm "$RUNNER_TEMP/$ARTIFACT.tar"
+          # Not verified, but fetched through the GitHub API from our own build.
+          flatpak remote-add --if-not-exists --user --no-gpg-verify flatpak-minimal \
+            "file://$RUNNER_TEMP/repo-dev"
+          flatpak install --user -y --noninteractive flatpak-minimal \
+            "org.flatpak_minimal.Platform//${FLATPAK_RUNTIME_VERSION}" \
+            "org.flatpak_minimal.Sdk//${FLATPAK_RUNTIME_VERSION}"
 
       - name: Bootstrap emb_cli
         run: |
@@ -67,7 +86,7 @@ jobs:
         run: emb cross flatpak-app-store.emb.yaml --target local --build --flatpak
 
       - name: Upload bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flatpak-${{ matrix.arch }}
           path: staging/emb-workspace/.config/flutter_workspace/**/dist/*.flatpak
@@ -89,7 +108,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: flatpak-*
       - name: Create release

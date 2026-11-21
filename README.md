@@ -27,7 +27,8 @@ git clone https://github.com/toyota-connected/emb_cli
 eval "$(emb_cli/bootstrap.sh --shellenv)"
 
 # the runtime, which emb also reads to decide what needs vendoring
-flatpak install --user org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+flatpak remote-add --user flatpak-minimal <meta-flatpak-minimal .flatpakrepo>
+flatpak install --user flatpak-minimal org.flatpak_minimal.Platform//wrynose org.flatpak_minimal.Sdk//wrynose
 
 emb cross <manifest>.emb.yaml --target local --build --flatpak
 
